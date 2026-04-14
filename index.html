@@ -8,14 +8,20 @@
         const serverConnection = new WebSocket('ws://' + window.location.hostname + ':4000');
         serverConnection.onmessage = gotMessageFromServer;
 
+        // ──────────────────────────────────────────────
+        // BOTH PEERS: runs on page load
+        // ──────────────────────────────────────────────
         function startup() {
             document.getElementById('connectButton').addEventListener('click', connectPeers, false);
             document.getElementById('sendButton').addEventListener('click', sendMessage, false);
             peerConnection = new RTCPeerConnection(); //add STUN/TURN here
             peerConnection.onicecandidate = gotIceCandidate;
-            peerConnection.ondatachannel = gotDataChannel; // moved here — must be set before any offer/answer
+            peerConnection.ondatachannel = gotDataChannel;
         }
 
+        // ──────────────────────────────────────────────
+        // BOTH PEERS: send a message over the data channel
+        // ──────────────────────────────────────────────
         function sendMessage() {
             if (!dataChannel || dataChannel.readyState !== 'open') {
                 console.log('Data channel not open yet');
@@ -28,12 +34,24 @@
             messageInputBox.focus();
         }
 
+        // ──────────────────────────────────────────────
+        // OFFERER STEP 1: user clicks Connect
+        //   - creates the data channel (only offerer does this)
+        //   - creates an SDP offer
+        //   → triggers createdDescription()
+        // ──────────────────────────────────────────────
         function connectPeers() {
-            dataChannel = peerConnection.createDataChannel("test"); // only offerer creates the channel
+            dataChannel = peerConnection.createDataChannel("test");
             setupDataChannel(dataChannel);
             peerConnection.createOffer().then(createdDescription).catch(errorHandler);
         }
 
+        // ──────────────────────────────────────────────
+        // OFFERER STEP 2 / ANSWERER STEP 2:
+        //   - sets local description (offer or answer)
+        //   - sends it to the other peer via signaling server
+        //   → ICE gathering starts, triggers gotIceCandidate()
+        // ──────────────────────────────────────────────
         function createdDescription(description) {
             console.log('Got description');
             peerConnection.setLocalDescription(description).then(function() {
@@ -41,12 +59,20 @@
             }).catch(errorHandler);
         }
 
+        // ──────────────────────────────────────────────
+        // ANSWERER STEP 3: fires when the offerer's data channel arrives
+        //   - reassigns global dataChannel so answerer can send too
+        // ──────────────────────────────────────────────
         function gotDataChannel(event) {
             console.log('Got data channel');
-            dataChannel = event.channel; // answerer uses this channel
+            dataChannel = event.channel;
             setupDataChannel(dataChannel);
         }
 
+        // ──────────────────────────────────────────────
+        // BOTH PEERS: wire up onmessage/onopen for whichever
+        // side created or received the data channel
+        // ──────────────────────────────────────────────
         function setupDataChannel(channel) {
             channel.onmessage = function(event) {
                 let receiveBox = document.getElementById('message_rcv');
@@ -57,6 +83,14 @@
             };
         }
 
+        // ──────────────────────────────────────────────
+        // ANSWERER STEP 1 / BOTH PEERS (ICE):
+        //   - receives SDP or ICE candidate from signaling server
+        //   - if SDP offer → setRemoteDescription, then createAnswer
+        //     → triggers createdDescription() (answerer step 2)
+        //   - if SDP answer → setRemoteDescription (offerer done)
+        //   - if ICE candidate → addIceCandidate
+        // ──────────────────────────────────────────────
         function gotMessageFromServer(message) {
             const signal = JSON.parse(message.data);
             if(signal.uid === uid) return;
@@ -73,6 +107,10 @@
             }
         }
 
+        // ──────────────────────────────────────────────
+        // BOTH PEERS: fires as ICE candidates are gathered
+        //   - sends each candidate to the other peer via signaling server
+        // ──────────────────────────────────────────────
         function gotIceCandidate(event) {
             if(event.candidate != null) {
                 let iceCandidate = JSON.stringify({'ice': event.candidate, 'uid': uid});
